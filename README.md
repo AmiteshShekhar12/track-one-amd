@@ -55,7 +55,8 @@ Token efficiency measures (scoring ranks by total tokens):
 ## Project layout
 
 ```
-main.py            # the whole agent (classify → route → solve → write results)
+main.py            # the agent (classify → route → solve → write results + metrics)
+evaluate.py        # local evaluation pipeline (LLM judge, tokens, latency)
 Dockerfile         # python:3.12-slim, runs main.py
 requirements.txt   # openai (async client, OpenAI-compatible endpoints)
 .env.example       # template for local development
@@ -87,6 +88,69 @@ INPUT_PATH=./input/tasks.json OUTPUT_PATH=./output/results.json python main.py
 
 cat output/results.json
 ```
+
+The agent also writes `output/metrics.json` alongside the results: per-task
+token usage (prompt/completion/total across both the classification call and
+the solve call), the model used, per-response elapsed time, and totals. The
+judging harness ignores it; the evaluation pipeline below consumes it.
+
+## Evaluation pipeline
+
+`evaluate.py` scores a finished agent run so you can iterate on accuracy and
+token efficiency locally — mirroring how the hackathon judges (LLM-judge
+accuracy gate, then token ranking).
+
+What it measures:
+
+- **Accuracy** — for every task the pipeline first calls a *bigger* model
+  (`JUDGE_MODEL`, defaulting to the largest model in `ALLOWED_MODELS`) to
+  generate an ideal reference answer, then asks the same model to grade the
+  agent's answer against that reference on a 0.0–1.0 scale (semantic
+  correctness, not wording). Reported as mean score plus a pass rate at the
+  0.7 threshold.
+- **Tokens used** — total and per task, read from the agent's
+  `output/metrics.json` (judge tokens are tracked separately and don't count
+  against the agent).
+- **Time elapsed per response** — per-task wall time from `metrics.json`.
+- **Total time elapsed** — the agent's full run time.
+
+### How to run
+
+```bash
+# 1. run the agent first so results.json + metrics.json exist
+INPUT_PATH=./input/tasks.json OUTPUT_PATH=./output/results.json python main.py
+
+# 2. evaluate the run (same env vars / .env as the agent)
+INPUT_PATH=./input/tasks.json OUTPUT_PATH=./output/results.json python evaluate.py
+
+# optional: pin a specific reference/judge model
+JUDGE_MODEL=kimi-k2.7-code INPUT_PATH=./input/tasks.json \
+  OUTPUT_PATH=./output/results.json python evaluate.py
+```
+
+The console prints a per-task table (score, tokens, latency, category, judge
+reason) and an aggregate summary. A full report — including each generated
+ideal answer — is written to `output/evaluation.json`:
+
+```json
+{
+  "judge_model": "...",
+  "accuracy": 0.91,
+  "pass_rate": 0.88,
+  "agent_total_tokens": 4213,
+  "agent_total_elapsed_s": 41.7,
+  "judge_total_tokens": 9120,
+  "tasks": [
+    { "task_id": "t1", "score": 1.0, "reason": "...", "ideal": "...",
+      "tokens": 312, "elapsed_s": 3.4, "category": "factual", "model": "..." }
+  ]
+}
+```
+
+Evaluation env vars (all optional): `JUDGE_MODEL`, `METRICS_PATH`,
+`EVAL_OUTPUT_PATH`. `evaluate.py` is a local dev tool only — it is excluded
+from the submitted container's runtime path and its judge calls are never made
+during judging.
 
 ## Run with Docker
 

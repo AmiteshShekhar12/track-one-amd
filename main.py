@@ -25,6 +25,10 @@ from openai import AsyncOpenAI
 
 INPUT_PATH = os.environ.get("INPUT_PATH", "/input/tasks.json")
 OUTPUT_PATH = os.environ.get("OUTPUT_PATH", "/output/results.json")
+METRICS_PATH = os.environ.get(
+    "METRICS_PATH",
+    os.path.join(os.path.dirname(OUTPUT_PATH) or ".", "metrics.json"),
+)
 
 MAX_RUNTIME_S = 540          # write results well before the 10-minute kill
 PER_REQUEST_TIMEOUT_S = 25   # harness requires <30s per request
@@ -93,7 +97,7 @@ def build_roles(models):
     roles = {
         "classifier": ordered[0],                 # smallest model
         "small": ordered[0],
-        "medium": ordered[len(ordered) // 2],
+        "medium": ordered[(len(ordered) - 1) // 2],
         "large": ordered[-1],
         "code": code_models[-1] if code_models else ordered[-1],
     }
@@ -194,6 +198,20 @@ def clean(text):
     return THINK_RE.sub("", text).strip()
 
 
+def usage_dict(resp):
+    u = getattr(resp, "usage", None)
+    return {
+        "prompt": getattr(u, "prompt_tokens", 0) or 0,
+        "completion": getattr(u, "completion_tokens", 0) or 0,
+        "total": getattr(u, "total_tokens", 0) or 0,
+    }
+
+
+def add_usage(acc, usage):
+    for k in ("prompt", "completion", "total"):
+        acc[k] += usage[k]
+
+
 # ---------------------------------------------------------------------------
 # Agent
 # ---------------------------------------------------------------------------
@@ -219,21 +237,22 @@ class Agent:
                     ),
                     timeout=PER_REQUEST_TIMEOUT_S,
                 )
-                return clean(resp.choices[0].message.content)
+                return clean(resp.choices[0].message.content), usage_dict(resp)
             except Exception as e:  # noqa: BLE001 — retry on any transport error
                 last_err = e
                 if attempt < retries:
                     await asyncio.sleep(1.5 * (attempt + 1))
         raise last_err
 
-    async def classify(self, prompt):
+    async def classify(self, prompt, stats):
         """Route with the smallest model; fall back to safe defaults."""
         snippet = prompt[:CLASSIFY_MAX_PROMPT_CHARS]
         try:
-            raw = await self._chat(
+            raw, usage = await self._chat(
                 self.roles["classifier"], CLASSIFY_SYSTEM, snippet,
                 max_tokens=200, retries=1,
             )
+            add_usage(stats["tokens"], usage)
             match = re.search(r'\{[^{}]*"c"\s*:\s*(\d)[^{}]*\}', raw)
             if match:
                 obj = json.loads(match.group(0))
@@ -248,23 +267,36 @@ class Agent:
 
     async def solve(self, task):
         prompt = task.get("prompt", "")
-        category, difficulty = await self.classify(prompt)
+        t0 = time.monotonic()
+        stats = {
+            "task_id": task.get("task_id"),
+            "tokens": {"prompt": 0, "completion": 0, "total": 0},
+        }
+        category, difficulty = await self.classify(prompt, stats)
         role = ROUTING[category][difficulty]
         model = self.roles[role]
         print(f"[{task.get('task_id')}] {category}/{difficulty} -> {model}")
         try:
-            answer = await self._chat(
+            answer, usage = await self._chat(
                 model, SYSTEM_PROMPTS[category], prompt,
                 max_tokens=MAX_TOKENS[category],
             )
         except Exception as e:  # noqa: BLE001
             print(f"[{task.get('task_id')}] primary model failed ({e}); "
                   f"falling back to {self.roles['medium']}", file=sys.stderr)
-            answer = await self._chat(
-                self.roles["medium"], SYSTEM_PROMPTS[category], prompt,
+            model = self.roles["medium"]
+            answer, usage = await self._chat(
+                model, SYSTEM_PROMPTS[category], prompt,
                 max_tokens=MAX_TOKENS[category], retries=1,
             )
-        return answer
+        add_usage(stats["tokens"], usage)
+        stats.update(
+            category=category,
+            difficulty=difficulty,
+            model=model,
+            elapsed_s=round(time.monotonic() - t0, 2),
+        )
+        return answer, stats
 
 
 # ---------------------------------------------------------------------------
@@ -285,6 +317,7 @@ async def run():
     agent = Agent(client, roles)
     semaphore = asyncio.Semaphore(CONCURRENCY)
     results = {t["task_id"]: "" for t in tasks}
+    task_stats = {}
 
     async def worker(task):
         async with semaphore:
@@ -294,25 +327,42 @@ async def run():
                       file=sys.stderr)
                 return
             try:
-                results[task["task_id"]] = await asyncio.wait_for(
+                answer, stats = await asyncio.wait_for(
                     agent.solve(task), timeout=min(remaining, 90)
                 )
+                results[task["task_id"]] = answer
+                task_stats[task["task_id"]] = stats
             except Exception as e:  # noqa: BLE001
                 print(f"[{task['task_id']}] failed: {e}", file=sys.stderr)
 
     await asyncio.gather(*(worker(t) for t in tasks))
 
-    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
+    os.makedirs(os.path.dirname(OUTPUT_PATH) or ".", exist_ok=True)
     with open(OUTPUT_PATH, "w") as f:
         json.dump(
             [{"task_id": t["task_id"], "answer": results[t["task_id"]]}
              for t in tasks],
             f, ensure_ascii=False, indent=2,
         )
+
     elapsed = time.monotonic() - start
+    stats_rows = [task_stats[t["task_id"]] for t in tasks
+                  if t["task_id"] in task_stats]
+    metrics = {
+        "total_elapsed_s": round(elapsed, 2),
+        "total_tokens": sum(s["tokens"]["total"] for s in stats_rows),
+        "total_prompt_tokens": sum(s["tokens"]["prompt"] for s in stats_rows),
+        "total_completion_tokens": sum(
+            s["tokens"]["completion"] for s in stats_rows),
+        "tasks": stats_rows,
+    }
+    with open(METRICS_PATH, "w") as f:
+        json.dump(metrics, f, indent=2)
+
     answered = sum(1 for v in results.values() if v)
-    print(f"done: {answered}/{len(tasks)} answered in {elapsed:.1f}s "
-          f"-> {OUTPUT_PATH}")
+    print(f"done: {answered}/{len(tasks)} answered, "
+          f"{metrics['total_tokens']} tokens, {elapsed:.1f}s "
+          f"-> {OUTPUT_PATH} (metrics: {METRICS_PATH})")
 
 
 if __name__ == "__main__":
