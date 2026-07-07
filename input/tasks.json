@@ -1,0 +1,10 @@
+[
+  { "task_id": "t1", "prompt": "Explain in two sentences how DNS resolution works." },
+  { "task_id": "t2", "prompt": "A store sells a jacket for $80. It is discounted by 15%, then a 10% sales tax is applied. What is the final price?" },
+  { "task_id": "t3", "prompt": "Classify the sentiment of this review and justify: 'The battery died after two days and support never replied.'" },
+  { "task_id": "t4", "prompt": "Summarise the following text in one sentence: The Amazon rainforest, spanning nine countries, produces about 20% of the world's oxygen and hosts an estimated 10% of all known species, but deforestation has accelerated in recent decades due to logging, agriculture, and mining." },
+  { "task_id": "t5", "prompt": "Extract and label all named entities: 'Tim Cook announced at Apple Park in Cupertino on June 10, 2024 that Apple would partner with OpenAI.'" },
+  { "task_id": "t6", "prompt": "Find the bug and fix it:\n\ndef average(nums):\n    total = 0\n    for n in nums:\n        total += n\n    return total / len(nums) + 1" },
+  { "task_id": "t7", "prompt": "Alice, Bob, and Carol sit in a row of three chairs. Alice is not on the left. Bob is not next to Carol. Who sits where?" },
+  { "task_id": "t8", "prompt": "Write a Python function `is_palindrome(s: str) -> bool` that ignores case, spaces, and punctuation." }
+]
