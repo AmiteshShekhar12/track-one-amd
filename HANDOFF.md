@@ -161,6 +161,9 @@ thing to suspect.**
 
 ## Submission checklist
 
+The final submission needs **three links**: (1) a live Streamlit
+deployment, (2) the GitHub repo, (3) the GHCR image.
+
 - [ ] Deploy the three Gemma models on the team Fireworks account
       (app.fireworks.ai/models → Deploy; verify 200 via curl in README)
       or accept minimax/kimi-only routing.
@@ -171,6 +174,13 @@ thing to suspect.**
       `main`. Check the Actions tab for a green run before submitting.
 - [ ] GHCR package visibility flipped to Public (one-time, see above) — the
       workflow's last step prints the exact settings link as a reminder.
+- [ ] Deploy `streamlit_app.py` on share.streamlit.io (see README →
+      "Streamlit demo UI" → "Deploying to Streamlit Community Cloud") and
+      get the live URL.
+- [ ] Decide whether the **GitHub repo itself** needs to be public — it is
+      currently private. The GHCR image is made public independently (see
+      above), so this only matters if the hackathon rules require the
+      source to be publicly browsable, not just the two artifacts.
 - [ ] Remember: max 10 submissions/hour, 10-minute runtime cap, exit 0.
 
 ## Known issues / next steps

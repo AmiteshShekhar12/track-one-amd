@@ -56,16 +56,22 @@ jobs:
 
       - name: Smoke test — run the container like the judging harness would
         run: |
-          mkdir -p smoke_output
+          mkdir -p smoke_input smoke_output
+          cp .github/ci/smoke_tasks.json smoke_input/tasks.json
           # Deliberately fake Fireworks credentials: this proves the bundled
           # local model can classify + answer and that remote failures fall
-          # back to it, without needing a real API key in CI.
+          # back to it, without needing a real API key in CI. A small,
+          # cheap-category task set is used here (not the full 8-task
+          # production sample) because a fake key forces *every* task onto
+          # the local-only fallback path, serialized through one llama.cpp
+          # lock on a 2-vCPU runner — worse than any real run, where a valid
+          # key means most categories never touch local fallback at all.
           docker run --rm --platform linux/amd64 \
             -e FIREWORKS_API_KEY=dummy \
             -e FIREWORKS_BASE_URL=https://api.fireworks.ai/inference/v1 \
             -e ALLOWED_MODELS="accounts/fireworks/models/minimax-m3,accounts/fireworks/models/kimi-k2p7-code" \
             -e USE_GEMMA=false \
-            -v "$(pwd)/input:/input:ro" \
+            -v "$(pwd)/smoke_input:/input:ro" \
             -v "$(pwd)/smoke_output:/output" \
             ${{ env.IMAGE }}:${{ github.sha }}
 
@@ -75,7 +81,7 @@ jobs:
           test -s smoke_output/metrics.json
           python3 - <<'EOF'
           import json, sys
-          tasks = json.load(open("input/tasks.json"))
+          tasks = json.load(open("smoke_input/tasks.json"))
           results = json.load(open("smoke_output/results.json"))
           want = {t["task_id"] for t in tasks}
           got = {r["task_id"] for r in results}

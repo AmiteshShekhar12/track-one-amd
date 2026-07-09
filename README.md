@@ -127,13 +127,15 @@ submitted container should run with the default `USE_GEMMA=true`.
 ## Project layout
 
 ```
-main.py            # the agent (classify → route → solve → write results + metrics)
-evaluate.py        # local evaluation pipeline (LLM judge, tokens, latency)
-Dockerfile         # python:3.12-slim + llama-cpp-python + bundled GGUF weights
-requirements.txt   # openai (async client, OpenAI-compatible endpoints)
-.env.example       # template for local development
-input/tasks.json   # sample tasks covering all 8 categories, for local testing
-models/model.gguf  # local weights (downloaded; baked into the image at build)
+main.py              # the agent (classify → route → solve → write results + metrics)
+evaluate.py          # local evaluation pipeline (LLM judge, tokens, latency)
+streamlit_app.py     # live-demo UI wrapping the same pipeline (see below)
+Dockerfile           # python:3.12-slim + llama-cpp-python + bundled GGUF weights
+requirements.txt     # openai, streamlit, pandas
+.env.example         # template for local development
+input/tasks.json     # sample tasks covering all 8 categories, for local testing
+models/model.gguf    # local weights (downloaded; baked into the image at build)
+.github/workflows/   # CI: builds/pushes/smoke-tests the linux/amd64 image on every push
 ```
 
 ## Run locally
@@ -245,6 +247,49 @@ reason) and an aggregate summary. A full report — including each generated
 ideal answer — is written to `output/evaluation.json`. Evaluation env vars
 (all optional): `JUDGE_MODEL`, `METRICS_PATH`, `EVAL_OUTPUT_PATH`.
 `evaluate.py` is a local dev tool only — it is not copied into the container.
+
+## Streamlit demo UI
+
+`streamlit_app.py` is a thin visual wrapper around the exact same `Agent`
+class, `ROUTING` table and model-tier heuristics in `main.py` — it is not a
+second implementation. It's the live-demo artifact for judges: paste a
+prompt or upload a `tasks.json` and watch the classification, routing
+decision, answer, and token/latency cost happen in real time against your
+real Fireworks account. It is **not** copied into the submitted Docker
+image (the Dockerfile only `COPY`s `main.py`); it's a separate deployment.
+
+Run it locally:
+
+```bash
+pip install -r requirements.txt   # now includes streamlit + pandas
+streamlit run streamlit_app.py
+```
+
+Fill in the Fireworks credentials and `ALLOWED_MODELS` in the sidebar (they
+default to whatever is already in your environment/`.env`), then use the
+"Single prompt" tab for a one-off demo or "Batch (tasks.json)" to run the
+full sample set and see the aggregate token/time metrics. Leave `USE_LOCAL`
+unchecked unless you've downloaded `models/model.gguf` and installed
+`llama-cpp-python` on the machine running Streamlit — there are no bundled
+weights outside the Docker image.
+
+### Deploying to Streamlit Community Cloud
+
+1. Go to <https://share.streamlit.io>, sign in, and pick **New app** from
+   this GitHub repo.
+2. Main file path: `streamlit_app.py`. Branch: `main`.
+3. Streamlit Cloud auto-installs from the repo-root `requirements.txt`
+   (already includes `streamlit`/`pandas` alongside the agent's `openai`
+   dependency) — no extra config needed.
+4. Optional: under **Settings → Secrets**, add `FIREWORKS_API_KEY`,
+   `FIREWORKS_BASE_URL` and `ALLOWED_MODELS` so the deployed app comes up
+   pre-filled for a live demo instead of requiring the presenter to paste a
+   key into the sidebar each time. The app reads `st.secrets` as a fallback
+   whenever those keys aren't already in the environment.
+5. Leave `USE_LOCAL` off in the deployed app — Community Cloud has no
+   bundled GGUF weights and limited RAM/CPU; the demo is meant to show the
+   real Fireworks-routing behavior, not the local-model path (that's what
+   the Docker image + CI smoke test verify instead).
 
 ## Build the Docker image
 
