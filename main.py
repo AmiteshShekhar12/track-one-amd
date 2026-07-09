@@ -1,13 +1,24 @@
 """
-AMD Hackathon Track 1 — General-Purpose AI Agent.
+AMD Hackathon Track 1 — General-Purpose AI Agent (hybrid local + Fireworks).
 
 Pipeline per task:
-  1. Classify the prompt with the SMALLEST allowed model into one of 8
-     categories + a difficulty level (cheap, tiny token budget).
-  2. Route the prompt to the model best suited for that category/difficulty.
-  3. Write all answers to /output/results.json.
+  1. Classify the prompt into one of 8 categories + a difficulty level.
+     Runs on the bundled LOCAL model when available (zero recorded tokens),
+     otherwise on the smallest allowed Fireworks model.
+  2. Route the prompt: easy tasks stay on the local model; everything else
+     goes to the Fireworks model best suited for that category/difficulty.
+  3. Write all answers to /output/results.json (+ metrics.json).
 
-All model IDs come from ALLOWED_MODELS at runtime; nothing is hardcoded.
+All Fireworks model IDs come from ALLOWED_MODELS at runtime; nothing is
+hardcoded. Local weights are bundled in the image (no Ollama / no runtime
+pre-installed on the judging VM) and loaded with llama-cpp-python.
+
+Flags (env):
+  USE_GEMMA=false     skip gemma-* models (they are on-demand on Fireworks —
+                      deploy at https://app.fireworks.ai/models first; a 404
+                      means "not deployed", not "banned")
+  USE_LOCAL=false     disable the local model entirely
+  LOCAL_MODEL_PATH    path to the bundled GGUF weights
 """
 
 import asyncio
@@ -23,17 +34,11 @@ from openai import AsyncOpenAI
 # Configuration
 # ---------------------------------------------------------------------------
 
-INPUT_PATH = os.environ.get("INPUT_PATH", "/input/tasks.json")
-OUTPUT_PATH = os.environ.get("OUTPUT_PATH", "/output/results.json")
-METRICS_PATH = os.environ.get(
-    "METRICS_PATH",
-    os.path.join(os.path.dirname(OUTPUT_PATH) or ".", "metrics.json"),
-)
-
-MAX_RUNTIME_S = 540          # write results well before the 10-minute kill
-PER_REQUEST_TIMEOUT_S = 25   # harness requires <30s per request
-CONCURRENCY = 8
-CLASSIFY_MAX_PROMPT_CHARS = 1500
+def env_flag(name, default):
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
 
 
 def load_dotenv(path=".env"):
@@ -49,12 +54,33 @@ def load_dotenv(path=".env"):
             os.environ.setdefault(key.strip(), value.strip().strip("'\""))
 
 
+load_dotenv()  # must run before the path constants below are resolved
+
+INPUT_PATH = os.environ.get("INPUT_PATH", "/input/tasks.json")
+OUTPUT_PATH = os.environ.get("OUTPUT_PATH", "/output/results.json")
+METRICS_PATH = os.environ.get(
+    "METRICS_PATH",
+    os.path.join(os.path.dirname(OUTPUT_PATH) or ".", "metrics.json"),
+)
+
+MAX_RUNTIME_S = 540          # write results well before the 10-minute kill
+PER_REQUEST_TIMEOUT_S = 25   # harness requires <30s per request
+CONCURRENCY = 8
+CLASSIFY_MAX_PROMPT_CHARS = 1500
+LOCAL_CONTEXT = 4096
+
+
 def get_config():
-    load_dotenv()
     api_key = os.environ.get("FIREWORKS_API_KEY") or os.environ.get("OPENAI_API_KEY")
     base_url = os.environ.get("FIREWORKS_BASE_URL") or os.environ.get("OPENAI_BASE_URL")
     models_raw = os.environ.get("ALLOWED_MODELS") or os.environ.get("MODELS", "")
     models = [m.strip() for m in models_raw.split(",") if m.strip()]
+    if not env_flag("USE_GEMMA", True):
+        non_gemma = [m for m in models if "gemma" not in m.lower()]
+        if non_gemma:
+            print(f"USE_GEMMA=false: skipping {len(models) - len(non_gemma)} "
+                  "gemma model(s)")
+            models = non_gemma
     if not api_key or not base_url or not models:
         print(
             "Missing configuration: need FIREWORKS_API_KEY, FIREWORKS_BASE_URL "
@@ -72,13 +98,14 @@ def get_config():
 # Lower rank = smaller/cheaper. Patterns are matched case-insensitively
 # against the model ID. Unknown models land mid-pack.
 SIZE_PATTERNS = [
-    (r"qwen.*3[.\-_]?6", 0),      # Qwen3.6 Plus — previous gen, cheapest
-    (r"qwen.*(plus|turbo|flash)", 1),
-    (r"qwen", 1),
-    (r"minimax", 2),              # MiniMax-M3 — large reasoning model
-    (r"kimi|k2", 3),              # Kimi K2.7 Code — largest
+    (r"gemma.*a\d+b", 0),                  # MoE, few active params — cheapest
+    (r"gemma.*(nvfp4|fp4|int4|awq)", 1),   # quantised dense gemma
+    (r"gemma", 2),
+    (r"qwen", 2),
+    (r"minimax", 3),                       # large reasoning model
+    (r"kimi|k2", 4),                       # largest (code-specialised)
 ]
-DEFAULT_RANK = 1
+DEFAULT_RANK = 2
 
 CODE_PATTERN = re.compile(r"code|coder|kimi|k2", re.IGNORECASE)
 
@@ -91,11 +118,11 @@ def rank_model(model_id):
 
 
 def build_roles(models):
-    """Map roles -> model IDs from whatever ALLOWED_MODELS contains."""
+    """Map roles -> Fireworks model IDs from whatever ALLOWED_MODELS contains."""
     ordered = sorted(models, key=rank_model)
     code_models = [m for m in ordered if CODE_PATTERN.search(m)]
     roles = {
-        "classifier": ordered[0],                 # smallest model
+        "classifier": ordered[0],                 # smallest remote model
         "small": ordered[0],
         "medium": ordered[(len(ordered) - 1) // 2],
         "large": ordered[-1],
@@ -107,6 +134,64 @@ def build_roles(models):
     if non_code and CODE_PATTERN.search(roles["large"]):
         roles["large"] = non_code[-1]
     return roles
+
+
+# ---------------------------------------------------------------------------
+# Local model (bundled GGUF weights, llama-cpp-python)
+# ---------------------------------------------------------------------------
+
+class LocalModel:
+    """Small local model. Its tokens are not recorded by the judging proxy,
+    so every task it absorbs is free. Calls are serialised (llama.cpp
+    context is not safe for concurrent generation)."""
+
+    def __init__(self, path):
+        from llama_cpp import Llama  # imported lazily: optional dependency
+        self.llm = Llama(
+            model_path=path,
+            n_ctx=LOCAL_CONTEXT,
+            n_threads=os.cpu_count(),
+            verbose=False,
+        )
+        self.name = f"local:{os.path.basename(path)}"
+        self.lock = asyncio.Lock()
+
+    async def chat(self, system, user, max_tokens):
+        async with self.lock:
+            resp = await asyncio.to_thread(
+                self.llm.create_chat_completion,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                temperature=0.0,
+                max_tokens=max_tokens,
+            )
+        usage = resp.get("usage", {})
+        return clean(resp["choices"][0]["message"]["content"]), {
+            "prompt": usage.get("prompt_tokens", 0),
+            "completion": usage.get("completion_tokens", 0),
+            "total": usage.get("total_tokens", 0),
+        }
+
+
+def load_local_model():
+    if not env_flag("USE_LOCAL", True):
+        print("USE_LOCAL=false: local model disabled")
+        return None
+    path = os.environ.get("LOCAL_MODEL_PATH", "/app/models/model.gguf")
+    if not os.path.exists(path):
+        print(f"local model not found at {path}; running remote-only",
+              file=sys.stderr)
+        return None
+    try:
+        model = LocalModel(path)
+        print(f"local model loaded: {model.name}")
+        return model
+    except Exception as e:  # noqa: BLE001
+        print(f"failed to load local model ({e}); running remote-only",
+              file=sys.stderr)
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -124,13 +209,14 @@ CATEGORIES = {
     8: "code_gen",
 }
 
-# category -> {difficulty -> role}
+# category -> {difficulty -> role}. "local" degrades to "small" when the
+# local model is unavailable.
 ROUTING = {
-    "factual":       {"easy": "small",  "medium": "small",  "hard": "medium"},
+    "factual":       {"easy": "local",  "medium": "small",  "hard": "medium"},
     "math":          {"easy": "small",  "medium": "medium", "hard": "large"},
-    "sentiment":     {"easy": "small",  "medium": "small",  "hard": "small"},
-    "summarization": {"easy": "small",  "medium": "small",  "hard": "medium"},
-    "ner":           {"easy": "small",  "medium": "small",  "hard": "medium"},
+    "sentiment":     {"easy": "local",  "medium": "local",  "hard": "small"},
+    "summarization": {"easy": "local",  "medium": "small",  "hard": "medium"},
+    "ner":           {"easy": "local",  "medium": "small",  "hard": "medium"},
     "code_debug":    {"easy": "code",   "medium": "code",   "hard": "code"},
     "logic":         {"easy": "medium", "medium": "large",  "hard": "large"},
     "code_gen":      {"easy": "code",   "medium": "code",   "hard": "code"},
@@ -182,11 +268,26 @@ SYSTEM_PROMPTS = {
 }
 
 CLASSIFY_SYSTEM = (
-    "Classify the user task. Reply with ONLY compact JSON, no other text: "
-    '{"c":<1-8>,"d":"<e|m|h>"} where c is: 1 factual knowledge, '
-    "2 math reasoning, 3 sentiment classification, 4 summarization, "
-    "5 named entity recognition, 6 code debugging, 7 logic puzzle, "
-    "8 code generation; d is difficulty: e easy, m medium, h hard."
+    "Classify the user task into a category c and difficulty d. Categories: "
+    "1=factual knowledge (explain a concept, definition, how something works), "
+    "2=mathematical reasoning (arithmetic, percentages, word problems), "
+    "3=sentiment classification (label a text positive/negative/neutral), "
+    "4=summarisation (condense a passage), "
+    "5=named entity recognition (extract people/orgs/locations/dates), "
+    "6=code debugging (find and fix bugs in given code), "
+    "7=logical puzzle (constraints to satisfy, deduction), "
+    "8=code generation (write new code from a description). "
+    "Difficulty: e=easy, m=medium, h=hard.\n"
+    "Examples:\n"
+    'Task: "What is photosynthesis and how does it work?" -> {"c":1,"d":"e"}\n'
+    'Task: "A phone costs $500, gets 20% off, then 8% tax. Final price?" -> {"c":2,"d":"m"}\n'
+    'Task: "Label the sentiment of this tweet and explain: ..." -> {"c":3,"d":"e"}\n'
+    'Task: "Condense this article into two sentences: ..." -> {"c":4,"d":"m"}\n'
+    'Task: "List every person, company and date mentioned: ..." -> {"c":5,"d":"e"}\n'
+    'Task: "This function returns the wrong total, fix it: def f(..." -> {"c":6,"d":"m"}\n'
+    'Task: "Three friends each own a different pet; from these clues, who owns the cat?" -> {"c":7,"d":"m"}\n'
+    'Task: "Implement a function that reverses a linked list." -> {"c":8,"d":"m"}\n'
+    "Reply with ONLY the JSON object, no other text."
 )
 
 THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
@@ -217,11 +318,12 @@ def add_usage(acc, usage):
 # ---------------------------------------------------------------------------
 
 class Agent:
-    def __init__(self, client, roles):
+    def __init__(self, client, roles, local=None):
         self.client = client
         self.roles = roles
+        self.local = local
 
-    async def _chat(self, model, system, user, max_tokens, retries=2):
+    async def _remote_chat(self, model, system, user, max_tokens, retries=2):
         last_err = None
         for attempt in range(retries + 1):
             try:
@@ -245,14 +347,20 @@ class Agent:
         raise last_err
 
     async def classify(self, prompt, stats):
-        """Route with the smallest model; fall back to safe defaults."""
+        """Classify locally when possible (free tokens), else use the
+        smallest remote model; fall back to safe defaults."""
         snippet = prompt[:CLASSIFY_MAX_PROMPT_CHARS]
         try:
-            raw, usage = await self._chat(
-                self.roles["classifier"], CLASSIFY_SYSTEM, snippet,
-                max_tokens=200, retries=1,
-            )
-            add_usage(stats["tokens"], usage)
+            if self.local:
+                raw, usage = await self.local.chat(
+                    CLASSIFY_SYSTEM, snippet, max_tokens=60)
+                add_usage(stats["local_tokens"], usage)
+            else:
+                raw, usage = await self._remote_chat(
+                    self.roles["classifier"], CLASSIFY_SYSTEM, snippet,
+                    max_tokens=200, retries=1,
+                )
+                add_usage(stats["tokens"], usage)
             match = re.search(r'\{[^{}]*"c"\s*:\s*(\d)[^{}]*\}', raw)
             if match:
                 obj = json.loads(match.group(0))
@@ -271,29 +379,46 @@ class Agent:
         stats = {
             "task_id": task.get("task_id"),
             "tokens": {"prompt": 0, "completion": 0, "total": 0},
+            "local_tokens": {"prompt": 0, "completion": 0, "total": 0},
         }
         category, difficulty = await self.classify(prompt, stats)
         role = ROUTING[category][difficulty]
-        model = self.roles[role]
-        print(f"[{task.get('task_id')}] {category}/{difficulty} -> {model}")
-        try:
-            answer, usage = await self._chat(
-                model, SYSTEM_PROMPTS[category], prompt,
-                max_tokens=MAX_TOKENS[category],
-            )
-        except Exception as e:  # noqa: BLE001
-            print(f"[{task.get('task_id')}] primary model failed ({e}); "
-                  f"falling back to {self.roles['medium']}", file=sys.stderr)
-            model = self.roles["medium"]
-            answer, usage = await self._chat(
-                model, SYSTEM_PROMPTS[category], prompt,
-                max_tokens=MAX_TOKENS[category], retries=1,
-            )
-        add_usage(stats["tokens"], usage)
+        max_tokens = MAX_TOKENS[category]
+        system = SYSTEM_PROMPTS[category]
+
+        if role == "local" and self.local:
+            model_name = self.local.name
+            print(f"[{task.get('task_id')}] {category}/{difficulty} -> {model_name}")
+            answer, usage = await self.local.chat(system, prompt, max_tokens)
+            add_usage(stats["local_tokens"], usage)
+        else:
+            model_name = self.roles["small" if role == "local" else role]
+            print(f"[{task.get('task_id')}] {category}/{difficulty} -> {model_name}")
+            try:
+                answer, usage = await self._remote_chat(
+                    model_name, system, prompt, max_tokens)
+                add_usage(stats["tokens"], usage)
+            except Exception as e:  # noqa: BLE001
+                if self.local:
+                    print(f"[{task.get('task_id')}] remote failed ({e}); "
+                          "answering locally", file=sys.stderr)
+                    model_name = self.local.name
+                    answer, usage = await self.local.chat(
+                        system, prompt, max_tokens)
+                    add_usage(stats["local_tokens"], usage)
+                else:
+                    print(f"[{task.get('task_id')}] primary model failed "
+                          f"({e}); falling back to {self.roles['medium']}",
+                          file=sys.stderr)
+                    model_name = self.roles["medium"]
+                    answer, usage = await self._remote_chat(
+                        model_name, system, prompt, max_tokens, retries=1)
+                    add_usage(stats["tokens"], usage)
+
         stats.update(
             category=category,
             difficulty=difficulty,
-            model=model,
+            model=model_name,
             elapsed_s=round(time.monotonic() - t0, 2),
         )
         return answer, stats
@@ -307,6 +432,7 @@ async def run():
     start = time.monotonic()
     api_key, base_url, models = get_config()
     roles = build_roles(models)
+    local = load_local_model()
     print(f"allowed models: {models}")
     print(f"role assignment: {roles}")
 
@@ -314,7 +440,7 @@ async def run():
         tasks = json.load(f)
 
     client = AsyncOpenAI(api_key=api_key, base_url=base_url, max_retries=0)
-    agent = Agent(client, roles)
+    agent = Agent(client, roles, local=local)
     semaphore = asyncio.Semaphore(CONCURRENCY)
     results = {t["task_id"]: "" for t in tasks}
     task_stats = {}
@@ -354,6 +480,8 @@ async def run():
         "total_prompt_tokens": sum(s["tokens"]["prompt"] for s in stats_rows),
         "total_completion_tokens": sum(
             s["tokens"]["completion"] for s in stats_rows),
+        "total_local_tokens": sum(
+            s["local_tokens"]["total"] for s in stats_rows),
         "tasks": stats_rows,
     }
     with open(METRICS_PATH, "w") as f:
@@ -361,7 +489,8 @@ async def run():
 
     answered = sum(1 for v in results.values() if v)
     print(f"done: {answered}/{len(tasks)} answered, "
-          f"{metrics['total_tokens']} tokens, {elapsed:.1f}s "
+          f"{metrics['total_tokens']} remote tokens "
+          f"(+{metrics['total_local_tokens']} free local), {elapsed:.1f}s "
           f"-> {OUTPUT_PATH} (metrics: {METRICS_PATH})")
 
 

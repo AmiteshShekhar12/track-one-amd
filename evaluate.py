@@ -55,7 +55,8 @@ JUDGE_SYSTEM = (
     "not wording: different phrasing, ordering or style is fine if the "
     "substance matches. For code, judge whether the candidate code is "
     "functionally correct. For summaries, judge faithfulness and whether "
-    "format/length constraints were obeyed. Reply with ONLY compact JSON: "
+    "format/length constraints were obeyed. Do NOT explain or think out "
+    "loud. Your entire reply must be exactly one line of compact JSON: "
     '{"score": <float 0.0-1.0>, "reason": "<one short sentence>"}'
 )
 
@@ -117,7 +118,7 @@ async def evaluate_task(client, judge_model, task, answer):
         verdict, t2 = await chat(
             client, judge_model, JUDGE_SYSTEM,
             JUDGE_TEMPLATE.format(prompt=prompt, ideal=ideal, answer=answer),
-            max_tokens=200,
+            max_tokens=600,
         )
         row["score"], row["reason"] = parse_score(verdict)
         row["ideal"] = ideal

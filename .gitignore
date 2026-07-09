@@ -1,1 +1,8 @@
 Participant Guide_ AMD Developer Hackathon (ACT II).pdf
+.env
+output/
+models/
+__pycache__/
+*.pyc
+.venv/
+*.pdf
