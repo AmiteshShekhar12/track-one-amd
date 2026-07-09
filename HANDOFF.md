@@ -1,6 +1,6 @@
 # Handoff — AMD Hackathon Track 1: Smart General-Purpose Agent
 
-Last updated: 2026-07-09. This document is the single place to understand
+Last updated: 2026-07-10. This document is the single place to understand
 where the project stands, how to run everything, and what's left before
 submission. Full usage detail lives in [README.md](README.md).
 
@@ -22,21 +22,31 @@ accuracy gate, then ranked by **fewest billable tokens**. The core idea:
    heuristics (`main.py` → `SIZE_PATTERNS`, `build_roles()`) — nothing is
    hardcoded, per the rules.
 
-## Current status — verified on 2026-07-09
+## Current status — reverified on 2026-07-10
 
 All testing ran natively (macOS, real Fireworks API, real local inference):
 
 | Run | Remote tokens | Local (free) tokens | Judge accuracy | Pass ≥0.7 | Wall time |
 |---|---|---|---|---|---|
-| Remote-only (no local model) | 5,394 | 0 | 98.1% | 8/8 | 11.6 s |
-| Hybrid (3B local classifier + answers) | **2,686** | 3,429 | 93.8% | 8/8 | 43.0 s |
+| Remote-only (no local model) | 7,351 | 0 | 98.1% | 8/8 | 4.7 s |
+| Hybrid (3B local classifier + answers) | **2,856** | 3,429 | 98.75% | 8/8 | 27.1 s |
 
-- The hybrid halves billable tokens — the leaderboard metric — while still
-  passing the accuracy gate on all 8 sample tasks (`input/tasks.json`).
-- Fireworks model IDs are the full form `accounts/fireworks/models/<name>`.
-  MiniMax-M3 and Kimi-K2p7-Code respond serverless (HTTP 200). All three
-  Gemma models return **404 until you deploy them** on your account (see
-  README → "Using the Gemma models"). Testing runs use `USE_GEMMA=false`.
+- The hybrid roughly halves billable tokens — the leaderboard metric — while
+  still passing the accuracy gate on all 8 sample tasks (`input/tasks.json`).
+  Exact token counts vary run-to-run (LLM outputs, classifier misses on
+  1-2 tasks route them differently) but both configurations stay well above
+  the 0.7 pass threshold on every task.
+- **Bug fixed 2026-07-10**: `.env.example` and three snippets in README.md
+  (Jupyter env block, `JUDGE_MODEL` example, `docker run` example) used
+  short Fireworks model IDs (e.g. `minimax-m3`), which return **HTTP 404**
+  against the real API — confirmed by curl. Fireworks model IDs must be the
+  full form `accounts/fireworks/models/<name>`; all four spots are now
+  fixed to match what HANDOFF's own docker-run example already had right.
+  If you pulled `.env.example` before this fix, regenerate your `.env`.
+- MiniMax-M3 and Kimi-K2p7-Code respond serverless (HTTP 200, confirmed via
+  curl). All three Gemma models return **404 until you deploy them** on
+  your account (see README → "Using the Gemma models"). Testing runs use
+  `USE_GEMMA=false`.
 
 ## Repository map
 
@@ -75,9 +85,26 @@ The README also has a step-by-step for Jupyter at notebooks.amd.com.
 
 ## Build and push the Docker image
 
-The judging VM is `linux/amd64`; the image bundles the model weights
-(downloaded at build time via `MODEL_URL` build arg — the build needs
-internet). From an Apple Silicon Mac:
+**CI now does this automatically.** `.github/workflows/docker-build.yml`
+builds the image natively for `linux/amd64` on GitHub's amd64 runners (no
+QEMU needed there), pushes it to `ghcr.io/<owner>/<repo>`, verifies the
+pushed manifest really is `linux/amd64`, then smoke-tests the container
+with deliberately-fake Fireworks credentials — this exercises the bundled
+local model, classification, routing, and the remote-failure→local
+fallback path without needing a real API key in CI, and fails the job if
+any of the 8 sample tasks come back empty. It runs on every push to `main`
+that touches `main.py`/`Dockerfile`/`requirements.txt`, or on-demand via
+"Run workflow". **One manual step after the first successful run**: the
+GHCR package is created private by default — go to
+`github.com/<owner>?tab=packages` → the package → Package settings →
+change visibility to Public, since the judging harness pulls without auth.
+(Note: this repo itself is currently private on GitHub; that does not need
+to change — only the pushed *image* needs to be public.)
+
+Local/manual build is still useful for fast iteration. The judging VM is
+`linux/amd64`; the image bundles the model weights (downloaded at build
+time via `MODEL_URL` build arg — the build needs internet). From an Apple
+Silicon Mac:
 
 ```bash
 # one-time
@@ -120,23 +147,34 @@ resume (HF drops long downloads; hit this in practice at 92%).
       or accept minimax/kimi-only routing.
 - [ ] Ship with `USE_GEMMA` **unset** (defaults true) — the judges' harness
       serves all allowed models.
-- [ ] `docker buildx build --platform linux/amd64 --push`, verify manifest.
-- [ ] Registry/repo is public.
+- [x] `docker buildx build --platform linux/amd64 --push`, verify manifest —
+      automated by `.github/workflows/docker-build.yml` on every push to
+      `main`. Check the Actions tab for a green run before submitting.
+- [ ] GHCR package visibility flipped to Public (one-time, see above) — the
+      workflow's last step prints the exact settings link as a reminder.
 - [ ] Remember: max 10 submissions/hour, 10-minute runtime cap, exit 0.
 
 ## Known issues / next steps
 
-1. **Local answer latency**: locally-answered tasks took up to ~35 s wall
-   time on an M-series CPU. The 30 s/request rule is about API requests, but
-   if the judging VM's CPU is slow, consider routing fewer categories to
+1. **Local answer latency**: locally-answered tasks took up to ~13 s wall
+   time each on an M-series CPU in the 2026-07-10 rerun (up to ~35 s in
+   earlier testing). The 30 s/request rule is about API requests, but if
+   the judging VM's CPU is slow, consider routing fewer categories to
    "local" (edit `ROUTING` in `main.py`) or shrinking `MAX_TOKENS`.
-2. **Classifier quality**: the few-shot prompt gets ~6/8 exact categories
-   with the 3B model; misses so far were harmless (adjacent categories with
-   the same routed model). More few-shot examples or a slightly larger
-   local model are the levers.
-3. **Untested**: an actual `docker buildx --platform linux/amd64` build has
-   not been run end-to-end yet (only native testing). Do one full build +
-   containerised smoke test before the first real submission.
+2. **Classifier quality**: the few-shot prompt doesn't always land the exact
+   category/difficulty with the 3B model (e.g. one sample task classified
+   as `code_debug` instead of `code_gen` in the 2026-07-10 rerun); misses so
+   far were harmless (adjacent categories routed to the same model, or a
+   "medium" instead of "easy" difficulty just meaning one more task goes
+   remote instead of local). More few-shot examples or a slightly larger
+   local model are the levers if this needs tightening further.
+3. ~~Untested: an actual `docker buildx --platform linux/amd64` build~~ —
+   now covered by CI (see above); confirm a green Actions run before
+   submitting, since that's the actual artifact judges pull.
 4. `evaluate.py` is dev-only and never runs in the container; its judge
    defaults to the largest allowed model (Kimi) — override with
    `JUDGE_MODEL` if grading feels off.
+5. **Repo is currently private on GitHub.** The GHCR image can be made
+   public independently of the repo (see above), so this is only a problem
+   if the hackathon rules require the *source* to be publicly visible —
+   double-check the rules and flip repo visibility if so.

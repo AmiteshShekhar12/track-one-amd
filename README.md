@@ -183,7 +183,7 @@ totals. The judging harness ignores it; the evaluation pipeline consumes it.
    os.environ.update({
        "FIREWORKS_API_KEY": "<your-fireworks-key>",
        "FIREWORKS_BASE_URL": "https://api.fireworks.ai/inference/v1",
-       "ALLOWED_MODELS": "minimax-m3,kimi-k2p7-code,gemma-4-31b-it,gemma-4-26b-a4b-it,gemma-4-31b-it-nvfp4",
+       "ALLOWED_MODELS": "accounts/fireworks/models/minimax-m3,accounts/fireworks/models/kimi-k2p7-code,accounts/fireworks/models/gemma-4-31b-it,accounts/fireworks/models/gemma-4-26b-a4b-it,accounts/fireworks/models/gemma-4-31b-it-nvfp4",
        "USE_GEMMA": "false",          # flip to "true" once you deploy Gemma
        "LOCAL_MODEL_PATH": "models/model.gguf",
        "INPUT_PATH": "input/tasks.json",
@@ -236,7 +236,7 @@ INPUT_PATH=./input/tasks.json OUTPUT_PATH=./output/results.json python main.py
 INPUT_PATH=./input/tasks.json OUTPUT_PATH=./output/results.json python evaluate.py
 
 # optional: pin a specific reference/judge model
-JUDGE_MODEL=minimax-m3 INPUT_PATH=./input/tasks.json \
+JUDGE_MODEL=accounts/fireworks/models/minimax-m3 INPUT_PATH=./input/tasks.json \
   OUTPUT_PATH=./output/results.json python evaluate.py
 ```
 
@@ -293,7 +293,7 @@ Run it like the harness does:
 docker run --rm \
   -e FIREWORKS_API_KEY=your-key \
   -e FIREWORKS_BASE_URL=https://api.fireworks.ai/inference/v1 \
-  -e ALLOWED_MODELS="minimax-m3,kimi-k2p7-code,gemma-4-31b-it,gemma-4-26b-a4b-it,gemma-4-31b-it-nvfp4" \
+  -e ALLOWED_MODELS="accounts/fireworks/models/minimax-m3,accounts/fireworks/models/kimi-k2p7-code,accounts/fireworks/models/gemma-4-31b-it,accounts/fireworks/models/gemma-4-26b-a4b-it,accounts/fireworks/models/gemma-4-31b-it-nvfp4" \
   -e USE_GEMMA=false \
   -v "$(pwd)/input:/input:ro" \
   -v "$(pwd)/output:/output" \
