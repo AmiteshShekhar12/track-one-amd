@@ -1,0 +1,4 @@
+streamlit>=1.38
+openai>=1.50.0
+# optional — only needed for the local-model path:
+# llama-cpp-python

@@ -1,0 +1,171 @@
+[
+  {
+    "task_id": "t1",
+    "category": "factual_knowledge",
+    "difficulty": "medium",
+    "ideal_answer": "DNS resolution translates a human-readable domain name into an IP address by querying a chain of servers — the resolver checks a root server, then a top-level domain (TLD) server, then the authoritative name server for the specific domain. Once the authoritative server returns the IP address, the resolver caches it and the browser uses that address to connect to the correct machine."
+  },
+  {
+    "task_id": "t2",
+    "category": "mathematical_reasoning",
+    "difficulty": "easy",
+    "ideal_answer": "$74.80 (80 * 0.85 = 68; 68 * 1.10 = 74.80)"
+  },
+  {
+    "task_id": "t3",
+    "category": "sentiment_classification",
+    "difficulty": "easy",
+    "ideal_answer": "Negative. The review describes a product failure (battery died quickly) and poor customer service (support never replied), both of which express dissatisfaction."
+  },
+  {
+    "task_id": "t4",
+    "category": "text_summarisation",
+    "difficulty": "easy",
+    "ideal_answer": "The Amazon rainforest generates about a fifth of the world's oxygen and shelters roughly 10% of known species, but it is increasingly threatened by deforestation from logging, agriculture, and mining."
+  },
+  {
+    "task_id": "t5",
+    "category": "named_entity_recognition",
+    "difficulty": "medium",
+    "ideal_answer": "PERSON: Tim Cook; ORGANIZATION: Apple, OpenAI; LOCATION: Apple Park, Cupertino; DATE: June 10, 2024"
+  },
+  {
+    "task_id": "t6",
+    "category": "code_debugging",
+    "difficulty": "easy",
+    "ideal_answer": "Bug: the function adds an extra '+ 1' to the average. Fix:\n\ndef average(nums):\n    total = 0\n    for n in nums:\n        total += n\n    return total / len(nums)"
+  },
+  {
+    "task_id": "t7",
+    "category": "logical_reasoning",
+    "difficulty": "medium",
+    "ideal_answer": "Bob: left, Alice: middle, Carol: right. (Alice is not left, so Alice is middle or right. Bob is not next to Carol, so they cannot be adjacent — with 3 seats the only non-adjacent pair is left and right, so Bob and Carol occupy left/right in some order, leaving Alice in the middle. Testing both orders: 'Bob left, Carol right' satisfies all constraints.)"
+  },
+  {
+    "task_id": "t8",
+    "category": "code_generation",
+    "difficulty": "medium",
+    "ideal_answer": "import re\n\ndef is_palindrome(s: str) -> bool:\n    cleaned = re.sub(r'[^a-zA-Z0-9]', '', s).lower()\n    return cleaned == cleaned[::-1]"
+  },
+
+  {
+    "task_id": "t9",
+    "category": "factual_knowledge",
+    "difficulty": "easy",
+    "ideal_answer": "Canberra"
+  },
+  {
+    "task_id": "t10",
+    "category": "factual_knowledge",
+    "difficulty": "medium",
+    "ideal_answer": "Sunlight is made of many colors, and as it passes through the atmosphere, air molecules scatter shorter wavelengths (blue and violet light) much more than longer wavelengths like red. Because our eyes are more sensitive to blue than violet, and some violet is absorbed higher in the atmosphere, the sky appears predominantly blue."
+  },
+  {
+    "task_id": "t11",
+    "category": "mathematical_reasoning",
+    "difficulty": "easy",
+    "ideal_answer": "36 (240 * 0.15 = 36)"
+  },
+  {
+    "task_id": "t12",
+    "category": "mathematical_reasoning",
+    "difficulty": "medium",
+    "ideal_answer": "80 km/h (60 km / 0.75 h = 80 km/h)"
+  },
+  {
+    "task_id": "t13",
+    "category": "mathematical_reasoning",
+    "difficulty": "hard",
+    "ideal_answer": "$12,178 (18000 * 0.88^3 = 18000 * 0.681472 = 12266.5 -> recompute precisely: 0.88^3 = 0.681472; 18000 * 0.681472 = 12266.50; rounded = $12,267). Correct value: $12,267."
+  },
+  {
+    "task_id": "t14",
+    "category": "sentiment_classification",
+    "difficulty": "easy",
+    "ideal_answer": "Positive"
+  },
+  {
+    "task_id": "t15",
+    "category": "sentiment_classification",
+    "difficulty": "medium",
+    "ideal_answer": "Mixed/negative overall. The food is described neutrally-to-positively ('decent'), but the negative aspects (slow service, rude waiter) dominate the overall impression, making the net sentiment negative."
+  },
+  {
+    "task_id": "t16",
+    "category": "text_summarisation",
+    "difficulty": "easy",
+    "ideal_answer": "Global EV sales rose 35% last year thanks to cheaper batteries and more charging stations, though rural adoption still lags due to limited charging access and higher upfront costs."
+  },
+  {
+    "task_id": "t17",
+    "category": "text_summarisation",
+    "difficulty": "hard",
+    "ideal_answer": "- The Roman Republic was founded around 509 BCE after the monarchy was overthrown, and was ruled by elected officials and an aristocratic Senate.\n- It expanded across the Mediterranean through military conquest over several centuries.\n- Internal conflict, inequality, and powerful generals caused civil wars, ending with Augustus founding the Empire in 27 BCE."
+  },
+  {
+    "task_id": "t18",
+    "category": "named_entity_recognition",
+    "difficulty": "medium",
+    "ideal_answer": "PERSON: Elon Musk; ORGANIZATION: European Commission, Tesla, X Corp; LOCATION: Brussels; DATE: March 3, 2023"
+  },
+  {
+    "task_id": "t19",
+    "category": "named_entity_recognition",
+    "difficulty": "hard",
+    "ideal_answer": "ORGANIZATION: Amazon (the company, first mention); LOCATION: Amazon (the town in Peru), Peru, Amazon River; DATE: July 1, 2022. Note: the word 'Amazon' refers to three distinct entities (company, town, river) and must be disambiguated by context."
+  },
+  {
+    "task_id": "t20",
+    "category": "code_debugging",
+    "difficulty": "easy",
+    "ideal_answer": "Bug: indexing with len(lst) causes an IndexError (out of range) since valid indices go up to len(lst)-1. Fix:\n\ndef get_last_element(lst):\n    return lst[len(lst) - 1]\n\n(or more idiomatically: return lst[-1])"
+  },
+  {
+    "task_id": "t21",
+    "category": "code_debugging",
+    "difficulty": "medium",
+    "ideal_answer": "Bug: the base case returns 0 instead of 1, which makes every factorial evaluate to 0. Fix:\n\ndef factorial(n):\n    if n == 0:\n        return 1\n    return n * factorial(n - 1)"
+  },
+  {
+    "task_id": "t22",
+    "category": "code_debugging",
+    "difficulty": "hard",
+    "ideal_answer": "Bug: mutating 'items' (the list being iterated over) inside the loop via items.remove(item) causes skipped elements and incorrect results; also the logic is inverted (it removes on first-seen and appends on repeat, backwards from the intended dedup logic). Fix:\n\ndef remove_duplicates(items):\n    result = []\n    for item in items:\n        if item not in result:\n            result.append(item)\n    return result"
+  },
+  {
+    "task_id": "t23",
+    "category": "logical_reasoning",
+    "difficulty": "easy",
+    "ideal_answer": "Yes. This is a valid syllogism: all engineers at the company know Python (general rule), Maria is an engineer at the company (specific instance), therefore Maria knows Python (necessarily follows)."
+  },
+  {
+    "task_id": "t24",
+    "category": "logical_reasoning",
+    "difficulty": "medium",
+    "ideal_answer": "One valid schedule: Slot 1: C, Slot 2: A, Slot 3: D, Slot 4: B. (Checks: A before B ✓ [2<4]; C in slot 1 or 4 ✓ [slot 1]; D immediately after A ✓ [A=2, D=3].) Other valid schedules may also exist; any schedule satisfying all three constraints is acceptable."
+  },
+  {
+    "task_id": "t25",
+    "category": "logical_reasoning",
+    "difficulty": "hard",
+    "ideal_answer": "Ella: parrot, Grace: dog, Farid: cat, Dan: fish. (Ella owns parrot given directly. Grace owns dog given directly. Dan does not own cat or dog and Ella has the parrot, so Dan must own fish. That leaves cat for Farid, consistent with 'Farid does not own the fish.')"
+  },
+  {
+    "task_id": "t26",
+    "category": "code_generation",
+    "difficulty": "easy",
+    "ideal_answer": "def reverse_words(s: str) -> str:\n    return ' '.join(s.split()[::-1])"
+  },
+  {
+    "task_id": "t27",
+    "category": "code_generation",
+    "difficulty": "medium",
+    "ideal_answer": "def most_frequent(items: list) -> object:\n    counts = {}\n    for item in items:\n        counts[item] = counts.get(item, 0) + 1\n    best = None\n    best_count = -1\n    for item in items:\n        if counts[item] > best_count:\n            best = item\n            best_count = counts[item]\n    return best"
+  },
+  {
+    "task_id": "t28",
+    "category": "code_generation",
+    "difficulty": "hard",
+    "ideal_answer": "def merge_intervals(intervals):\n    if not intervals:\n        return []\n    intervals = sorted(intervals, key=lambda x: x[0])\n    merged = [intervals[0]]\n    for start, end in intervals[1:]:\n        last = merged[-1]\n        if start <= last[1]:\n            last[1] = max(last[1], end)\n        else:\n            merged.append([start, end])\n    return merged"
+  }
+]
