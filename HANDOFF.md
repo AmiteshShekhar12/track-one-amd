@@ -134,11 +134,30 @@ docker run --rm --platform linux/amd64 \
 (Emulated amd64 on a Mac is slow — fine for a smoke test, not for iterating.)
 
 Cross-build hardening already in the Dockerfile — don't remove:
-`build-essential cmake git` (source-build fallback), `GGML_NATIVE=OFF`
+`build-essential cmake git` (always needed — see below), `GGML_NATIVE=OFF`
 (portable binary; native tuning under QEMU crashes on the judging VM),
-`llama-cpp-python==0.3.19` pin (prebuilt cp312 wheel — avoids an hours-long
-QEMU compile), `CMAKE_BUILD_PARALLEL_LEVEL=4` (QEMU OOM), curl retries with
-resume (HF drops long downloads; hit this in practice at 92%).
+`llama-cpp-python==0.3.19` **built from source** (`--no-binary`, see below),
+`CMAKE_BUILD_PARALLEL_LEVEL=4` (QEMU OOM), curl retries with resume (HF
+drops long downloads; hit this in practice at 92%).
+
+**Bug fixed 2026-07-10 — local model silently never loaded in the real
+container.** The Dockerfile used to install `llama-cpp-python==0.3.19` from
+`--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu`. That
+wheel is tagged plain `linux_x86_64` (not manylinux) and turns out to be
+musl-linked; it installs without error but crashes at import time on our
+glibc-based `python:3.12-slim` image
+(`libc.musl-x86_64.so.1: cannot open shared object file`). `load_local_model()`
+catches the exception and silently falls back to remote-only — so every
+task was going to a billable model with **zero local savings**, defeating
+the whole point of the hybrid design, and nobody would notice without
+actually running the built container (native `python main.py` testing never
+hits this, since it doesn't go through the Dockerfile's pip install at all).
+Caught by the CI smoke test added the same day. Fix: drop the wheel index
+entirely and always build from source (`pip install --no-binary
+llama-cpp-python llama-cpp-python==0.3.19`) — the toolchain already in the
+image handles this in a few minutes. **If you ever see "running remote-only"
+in the container logs when it shouldn't be, this class of bug is the first
+thing to suspect.**
 
 ## Submission checklist
 
