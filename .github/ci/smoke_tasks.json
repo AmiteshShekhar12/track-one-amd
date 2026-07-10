@@ -1,0 +1,4 @@
+[
+  { "task_id": "s1", "prompt": "What is the capital of France?" },
+  { "task_id": "s2", "prompt": "Classify the sentiment: 'I love this product, it works great!'" }
+]
