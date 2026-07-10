@@ -252,11 +252,14 @@ ideal answer — is written to `output/evaluation.json`. Evaluation env vars
 
 `streamlit_app.py` is a thin visual wrapper around the exact same `Agent`
 class, `ROUTING` table and model-tier heuristics in `main.py` — it is not a
-second implementation. It's the live-demo artifact for judges: paste a
-prompt or upload a `tasks.json` and watch the classification, routing
-decision, answer, and token/latency cost happen in real time against your
-real Fireworks account. It is **not** copied into the submitted Docker
-image (the Dockerfile only `COPY`s `main.py`); it's a separate deployment.
+second implementation. It's the live-demo artifact for judges: pick one of
+the 28 labelled sample tasks (`demo_app/sample_tasks_and_solutions/` —
+each run shows the routing decision against the ground-truth category and
+the ideal answer), paste your own prompt, or upload a `tasks.json`, and
+watch the classification, routing decision, answer, and token/latency cost
+happen in real time against your real Fireworks account. It is **not**
+copied into the submitted Docker image (the Dockerfile only `COPY`s
+`main.py`); it's a separate deployment.
 
 Run it locally:
 
@@ -267,8 +270,10 @@ streamlit run streamlit_app.py
 
 Fill in the Fireworks credentials and `ALLOWED_MODELS` in the sidebar (they
 default to whatever is already in your environment/`.env`), then use the
-"Single prompt" tab for a one-off demo or "Batch (tasks.json)" to run the
-full sample set and see the aggregate token/time metrics. Leave `USE_LOCAL`
+"Single prompt" tab for a one-off demo or "Batch" to run the labelled demo
+set (with routing-accuracy scoring), the bundled `input/tasks.json`, or an
+uploaded file — with aggregate token/time metrics and a `results.json`
+download. Leave `USE_LOCAL`
 unchecked unless you've downloaded `models/model.gguf` and installed
 `llama-cpp-python` on the machine running Streamlit — there are no bundled
 weights outside the Docker image.
