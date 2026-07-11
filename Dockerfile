@@ -13,7 +13,9 @@ RUN apt-get update \
 # CMAKE_BUILD_PARALLEL_LEVEL caps compile jobs: full-parallel C++ under QEMU
 # can OOM the Docker Desktop VM.
 ENV CMAKE_ARGS="-DGGML_NATIVE=OFF" \
-    CMAKE_BUILD_PARALLEL_LEVEL=4
+    CMAKE_BUILD_PARALLEL_LEVEL=4 \
+    PIP_DEFAULT_TIMEOUT=120 \
+    PIP_RETRIES=10
 
 # llama-cpp-python has no manylinux wheel on PyPI for this version (sdist
 # only), and the "CPU wheel index" alternative (abetlen.github.io) ships a
