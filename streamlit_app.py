@@ -80,10 +80,18 @@ st.caption(
 
 with st.sidebar:
     st.header("Configuration")
-    api_key = st.text_input(
-        "FIREWORKS_API_KEY", type="password",
-        value=os.environ.get("FIREWORKS_API_KEY", secret("FIREWORKS_API_KEY")),
+    # SECURITY: never prefill the key into the widget — widget values are
+    # sent to every viewer's browser (and password fields have a reveal
+    # toggle). The configured key stays server-side; the input is only an
+    # override for viewers bringing their own key.
+    configured_key = os.environ.get("FIREWORKS_API_KEY", secret("FIREWORKS_API_KEY"))
+    key_override = st.text_input(
+        "FIREWORKS_API_KEY", type="password", value="",
+        placeholder="configured from app secrets ✅" if configured_key
+        else "fw_… (required)",
+        help="Leave blank to use the key configured in the app's secrets/environment.",
     )
+    api_key = key_override or configured_key
     base_url = st.text_input(
         "FIREWORKS_BASE_URL",
         value=os.environ.get(
