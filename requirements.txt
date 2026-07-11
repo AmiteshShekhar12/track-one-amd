@@ -1,3 +1,8 @@
 openai>=1.50.0
-streamlit>=1.38.0
-pandas>=2.0.0
+streamlit>=1.38.0,<2.0
+# pandas 3.0.x / pyarrow 25 wheels segfault the Streamlit Community Cloud
+# runtime (py3.11 linux) at server startup — pin to the mature 2.x/24.x
+# series. Symptom if unpinned: "Segmentation fault ... streamlit" right
+# after "Uvicorn server started" in the deploy logs.
+pandas>=2.0.0,<3.0
+pyarrow<25
