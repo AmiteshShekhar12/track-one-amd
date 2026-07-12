@@ -1,0 +1,83 @@
+name: Build, push and smoke-test LOCAL-ONLY agent image
+
+on:
+  push:
+    branches: [local-only]
+    paths:
+      - only_local_approach/**
+      - .github/workflows/docker-build-local-only.yml
+  workflow_dispatch: {}
+
+jobs:
+  build-push-smoke-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # ghcr.io requires a lowercase path; owner may contain uppercase.
+      - name: Compute lowercase image name
+        run: echo "IMAGE=ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/track-one-local-only" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # No GHA layer cache: the 4.7 GB model layer would blow the 10 GB
+      # cache quota and evict everything else for no benefit.
+      - name: Build and push (linux/amd64)
+        uses: docker/build-push-action@v6
+        with:
+          context: only_local_approach
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.sha }}
+
+      - name: Verify pushed manifest is linux/amd64
+        run: |
+          docker buildx imagetools inspect ${{ env.IMAGE }}:${{ github.sha }} | tee manifest.txt
+          grep -q "linux/amd64" manifest.txt
+
+      # The local-only agent needs NO env vars and no network at runtime —
+      # exactly how the judging harness runs it. One short task keeps the
+      # 7B-on-CI-CPU smoke test fast while exercising model load, classify,
+      # answer, and the incremental output path.
+      - name: Smoke test — run the container like the judging harness would
+        timeout-minutes: 30
+        run: |
+          mkdir -p smoke_input smoke_output
+          cat > smoke_input/tasks.json <<'EOF'
+          [ { "task_id": "s1", "prompt": "Classify the sentiment of this review as Positive, Negative, or Neutral and give a one-sentence reason: 'Setup took ages and the manual was useless, but the device itself works beautifully.'" } ]
+          EOF
+          docker run --rm --platform linux/amd64 \
+            -e MAX_RUNTIME_S=1500 \
+            -v "$(pwd)/smoke_input:/input:ro" \
+            -v "$(pwd)/smoke_output:/output" \
+            ${{ env.IMAGE }}:${{ github.sha }}
+
+      - name: Validate output shape
+        run: |
+          test -s smoke_output/results.json
+          python3 - <<'EOF'
+          import json
+          results = json.load(open("smoke_output/results.json"))
+          assert results[0]["task_id"] == "s1"
+          assert results[0]["answer"].strip(), "empty answer"
+          low = results[0]["answer"].lower()
+          assert "negative" not in low.split(".")[0].lower() or "positive" in low, results[0]["answer"]
+          print("OK:", results[0]["answer"][:120])
+          EOF
+
+      - name: Reminder — make the new package public (first run only)
+        run: |
+          echo "First push creates the GHCR package PRIVATE by default."
+          echo "Flip it once: github.com/${{ github.repository_owner }}?tab=packages"
+          echo "-> 'track-one-local-only' -> Package settings -> Change visibility -> Public."
