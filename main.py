@@ -241,8 +241,11 @@ SYSTEM_PROMPTS = {
         "line as: Answer: <value>"
     ),
     "sentiment": (
-        "Classify the sentiment (positive/negative/neutral) and justify in "
-        "one short sentence."
+        "Classify the sentiment using the labels offered in the task and "
+        "justify in one short sentence. If the text mixes clearly negative "
+        "and clearly positive aspects, do NOT label it Negative — call it "
+        "Mixed, Neutral, or Positive (weigh the overall outcome) and make "
+        "the reason acknowledge both sides."
     ),
     "summarization": (
         "Summarise exactly as requested. Obey every length and format "
@@ -389,8 +392,20 @@ class Agent:
         if role == "local" and self.local:
             model_name = self.local.name
             print(f"[{task.get('task_id')}] {category}/{difficulty} -> {model_name}")
-            answer, usage = await self.local.chat(system, prompt, max_tokens)
-            add_usage(stats["local_tokens"], usage)
+            try:
+                # bound the local call (including lock-queue time) so a slow
+                # CPU or a pile-up of local tasks degrades to a cheap remote
+                # call instead of an empty answer
+                answer, usage = await asyncio.wait_for(
+                    self.local.chat(system, prompt, max_tokens), timeout=60)
+                add_usage(stats["local_tokens"], usage)
+            except Exception as e:  # noqa: BLE001
+                print(f"[{task.get('task_id')}] local answer failed ({e!r}); "
+                      f"falling back to {self.roles['small']}", file=sys.stderr)
+                model_name = self.roles["small"]
+                answer, usage = await self._remote_chat(
+                    model_name, system, prompt, max_tokens, retries=1)
+                add_usage(stats["tokens"], usage)
         else:
             model_name = self.roles["small" if role == "local" else role]
             print(f"[{task.get('task_id')}] {category}/{difficulty} -> {model_name}")
@@ -454,7 +469,7 @@ async def run():
                 return
             try:
                 answer, stats = await asyncio.wait_for(
-                    agent.solve(task), timeout=min(remaining, 90)
+                    agent.solve(task), timeout=min(remaining, 240)
                 )
                 results[task["task_id"]] = answer
                 task_stats[task["task_id"]] = stats
