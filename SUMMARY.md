@@ -1,103 +1,55 @@
-# Quick Reference — Track 1 Smart Agent
+# Quick Reference — Track 1
 
-One-page cheat sheet. Details: [README.md](README.md) · project state: [HANDOFF.md](HANDOFF.md).
+Two submission images, both CI-built for `linux/amd64`, both public on GHCR.
+Details in [README.md](README.md); project state in [HANDOFF.md](HANDOFF.md).
 
-## What's what
+## Submission links
 
-| File | Purpose |
-|---|---|
-| `main.py` | The agent: classify (local model, free) → route → solve → `/output/results.json` |
-| `streamlit_app.py` | Live demo UI over the same pipeline (judges / testing) |
-| `evaluate.py` | Dev-only LLM-judge scoring (accuracy, tokens, latency) |
-| `Dockerfile` | Submission image: python-slim + llama-cpp-python (source-built) + bundled 3B GGUF |
-| `demo_app/sample_tasks_and_solutions/` | 28 labelled demo tasks + ideal answers (used by the Streamlit app) |
-| `.github/workflows/docker-build.yml` | CI: builds → pushes to GHCR → verifies linux/amd64 → smoke-tests |
+| Variant | Image | Validation score | Billable tokens |
+|---|---|---|---|
+| **Local-only (primary)** | `ghcr.io/amiteshshekhar12/track-one-local-only:latest` | 10/10 | 0 |
+| Hybrid (fallback) | `ghcr.io/amiteshshekhar12/track-one-amd:latest` | 8/10 | ~3,760 |
 
-## Setup (once)
+Submit under **Track 1** only — the Track 2 slot injects no env vars and
+judges video captions; these agents will always fail there.
+
+## How the images get (re)built
+
+- Hybrid: push to `main` touching `main.py` / `Dockerfile` /
+  `requirements.txt` → `docker-build.yml` rebuilds `track-one-amd`.
+- Local-only: push to branch `local-only` touching `only_local_approach/**`
+  → `docker-build-local-only.yml` rebuilds `track-one-local-only`.
+- Check progress: repo → **Actions** tab. Green check = image is on GHCR
+  (push happens before the smoke-test steps). Both workflows verify the
+  amd64 manifest and smoke-test the container like the harness does.
+
+## Local dev loop
 
 ```bash
-pip install -r requirements.txt llama-cpp-python   # llama-cpp only needed for USE_LOCAL
-
-mkdir -p models        # local weights, ~1.9 GB
-curl -fL --http1.1 --retry 5 -o models/model.gguf \
+pip install -r requirements.txt llama-cpp-python
+cp .env.example .env          # Fireworks key; keep USE_GEMMA=false unless deployed
+mkdir -p models && curl -fL --retry 5 -o models/model-3b.gguf \
   https://huggingface.co/bartowski/Qwen2.5-3B-Instruct-GGUF/resolve/main/Qwen2.5-3B-Instruct-Q4_K_M.gguf
 
-cp .env.example .env   # put your FIREWORKS_API_KEY in it
-```
-
-Key `.env` entries: `FIREWORKS_API_KEY`, `FIREWORKS_BASE_URL`
-(`https://api.fireworks.ai/inference/v1`), `ALLOWED_MODELS` (full
-`accounts/fireworks/models/<name>` IDs — short names 404),
-`USE_GEMMA=false` (until you deploy Gemma at <https://app.fireworks.ai/models>),
-`USE_LOCAL=true`, `LOCAL_MODEL_PATH=./models/model.gguf`.
-
-## Run the agent + evaluate
-
-```bash
+# run hybrid → results + metrics, then judge-score the run
 INPUT_PATH=./input/tasks.json OUTPUT_PATH=./output/results.json python main.py
 INPUT_PATH=./input/tasks.json OUTPUT_PATH=./output/results.json python evaluate.py
-```
 
-Outputs: `output/results.json` (answers), `output/metrics.json` (tokens +
-latency per task), `output/evaluation.json` (judge report).
-
-## Run the Streamlit app
-
-```bash
+# demo UI (same Agent, live)
 streamlit run streamlit_app.py
 ```
 
-- Credentials/models prefill from `.env`; you can override them in the sidebar.
-- **Single prompt** tab: pick one of the 28 labelled samples (shows routing
-  vs ground truth + ideal answer) or write your own.
-- **Batch** tab: demo set (with routing-accuracy score), bundled
-  `input/tasks.json`, or upload — totals + `results.json` download.
-- Leave **USE_LOCAL** unchecked unless `models/model.gguf` exists and
-  llama-cpp-python is installed on this machine.
+Local-only agent: `only_local_approach/main.py` (on the `local-only`
+branch) — needs no env vars at all; `LOCAL_MODEL_PATH` points at a GGUF,
+`MAX_RUNTIME_S` tunes the time budget (default 570 s).
 
-Deploy to <https://share.streamlit.io>: New app → this repo → main file
-`streamlit_app.py` → add `FIREWORKS_API_KEY` etc. under app **Secrets**
-(full steps in README → "Deploying to Streamlit Community Cloud").
+## Key facts the judges' harness relies on
 
-## Build the Docker image
-
-**Easiest — CI does it**: every push to `main` touching
-`main.py`/`Dockerfile`/`requirements.txt` builds and pushes
-`ghcr.io/<owner>/track-one-amd`, verifies the `linux/amd64` manifest, and
-smoke-tests the container. One-time: flip the GHCR package to **Public**
-(github.com → your profile → Packages → package settings → visibility).
-
-**Manual, from an Apple Silicon Mac** (judging VM is linux/amd64 — a plain
-`docker build` on M1 produces arm64 and scores zero):
-
-```bash
-docker buildx create --use 2>/dev/null || true
-
-docker buildx build --platform linux/amd64 \
-  -t docker.io/<user>/smart-agent:latest --push .
-
-# must show linux/amd64
-docker buildx imagetools inspect docker.io/<user>/smart-agent:latest
-```
-
-Run it like the judging harness does:
-
-```bash
-docker run --rm --platform linux/amd64 \
-  -e FIREWORKS_API_KEY=... \
-  -e FIREWORKS_BASE_URL=https://api.fireworks.ai/inference/v1 \
-  -e ALLOWED_MODELS="accounts/fireworks/models/minimax-m3,accounts/fireworks/models/kimi-k2p7-code" \
-  -e USE_GEMMA=false \
-  -v "$(pwd)/input:/input:ro" -v "$(pwd)/output:/output" \
-  <image>
-```
-
-Don't touch the Dockerfile's `--no-binary llama-cpp-python` (the wheel
-alternative is musl-linked and silently kills the local model in the
-container) or its `GGML_NATIVE=OFF` (portable amd64 binary).
-
-## Submitting
-
-- Ship with `USE_GEMMA` **unset** (defaults true) — the judges serve all models.
-- Image must be publicly pullable, `linux/amd64`, under 10 GB compressed.
-- Limits: 10 submissions/hour, 10-minute runtime, exit code 0, valid JSON output.
+- Reads `/input/tasks.json`, writes valid `/output/results.json` (one entry
+  per task, IDs preserved) — the local-only agent writes incrementally, so
+  even a timeout leaves valid output.
+- Hybrid reads `FIREWORKS_API_KEY` / `FIREWORKS_BASE_URL` /
+  `ALLOWED_MODELS` from the environment; nothing hardcoded. Local-only
+  needs nothing.
+- Images: hybrid ~2.3 GB, local-only ~5.2 GB — both far under the 10 GB cap.
+- Limits: 10-minute runtime, 10 submissions/hour, exit code 0.
