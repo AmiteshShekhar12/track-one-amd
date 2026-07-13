@@ -17,9 +17,11 @@ ENV CMAKE_ARGS="-DGGML_NATIVE=OFF" \
 
 RUN pip install --no-cache-dir --no-binary llama-cpp-python llama-cpp-python==0.3.19
 
-# Qwen2.5-7B-Instruct Q4_K_M (~4.7 GB) -> compressed image ~5.2 GB, well
-# under the 10 GB limit, and much stronger than a 3B on code/math/logic.
-ARG MODEL_URL=https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf
+# Qwen2.5-3B-Instruct Q4_K_M (~1.9 GB) -> total image well under 3 GB.
+# The 7B Q4 variant (~4.7 GB model) timed out on the judging harness —
+# image pull time appears to count against the run budget — so trade
+# model size for pull speed and ~2x faster CPU inference.
+ARG MODEL_URL=https://huggingface.co/bartowski/Qwen2.5-3B-Instruct-GGUF/resolve/main/Qwen2.5-3B-Instruct-Q4_K_M.gguf
 RUN mkdir -p /app/models \
     && curl -fL --http1.1 --retry 5 --retry-all-errors -C - \
        -o /app/models/model.gguf "$MODEL_URL"
